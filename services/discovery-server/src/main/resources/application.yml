@@ -1,0 +1,25 @@
+server:
+  port: 8761
+
+spring:
+  application:
+    name: discovery-server
+
+eureka:
+  client:
+    # This node IS the registry: it must not try to register with or fetch
+    # a registry from itself.
+    register-with-eureka: false
+    fetch-registry: false
+  server:
+    # Self-preservation exists to protect production Eureka clusters from
+    # evicting healthy instances during a network partition. This is a
+    # single-node demo registry, though, so we'd rather see stale/dead
+    # instances evicted promptly than have Eureka mask them.
+    enable-self-preservation: false
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info

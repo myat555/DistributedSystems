@@ -1,0 +1,39 @@
+# Ships every dsp-* container's stdout (JSON lines from Logback) into Kafka
+# topic "app-logs", which Logstash then consumes and indexes into
+# Elasticsearch. Kafka is the buffer that lets this handle burst/"millions of
+# logs/day" volume without Filebeat or Logstash applying backpressure to the
+# application containers themselves.
+
+filebeat.autodiscover:
+  providers:
+    - type: docker
+      hints.enabled: true
+      templates:
+        - condition:
+            contains:
+              docker.container.labels.com.docker.compose.project: "distributed-systems-platform"
+          config:
+            - type: container
+              paths:
+                - "/var/lib/docker/containers/${data.docker.container.id}/*.log"
+              # Each service already logs single-line JSON (LogstashEncoder),
+              # so no multiline aggregation is required here.
+
+processors:
+  - add_docker_metadata:
+      host: "unix:///var/run/docker.sock"
+  - decode_json_fields:
+      fields: ["message"]
+      target: "json"
+      overwrite_keys: true
+      add_error_key: true
+
+output.kafka:
+  hosts: ["kafka:29092"]
+  topic: "app-logs"
+  partition.round_robin:
+    reachable_only: false
+  required_acks: 1
+  compression: gzip
+
+logging.level: info

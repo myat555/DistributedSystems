@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  NOT actually included by services anymore (kept here only as the documented
+  source-of-truth for the config every service inlines). Logback's classpath
+  <include> resolver cannot reliably reach a resource that lives inside a *nested*
+  dependency jar (BOOT-INF/lib/common-*.jar within a Spring Boot executable fat jar)
+  at the point logging bootstraps -- confirmed by actually running a packaged jar,
+  which logged "Could not find resource corresponding to [logback-json-base.xml]"
+  and silently fell back to unstructured console logging. Each service's own
+  src/main/resources/logback-spring.xml therefore carries this same appender
+  config directly. If you change this file, copy the change to every service.
+-->
+<included>
+    <springProperty scope="context" name="serviceName" source="spring.application.name" defaultValue="unknown-service"/>
+
+    <appender name="JSON_STDOUT" class="ch.qos.logback.core.ConsoleAppender">
+        <encoder class="net.logstash.logback.encoder.LogstashEncoder">
+            <customFields>{"service":"${serviceName}"}</customFields>
+            <includeMdcKeyName>traceId</includeMdcKeyName>
+            <includeMdcKeyName>jobId</includeMdcKeyName>
+            <includeMdcKeyName>orderId</includeMdcKeyName>
+            <includeMdcKeyName>roomId</includeMdcKeyName>
+        </encoder>
+    </appender>
+
+    <root level="INFO">
+        <appender-ref ref="JSON_STDOUT"/>
+    </root>
+</included>

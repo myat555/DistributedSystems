@@ -1,0 +1,8 @@
+**/target/
+**/*.class
+.git/
+.idea/
+*.iml
+load-tests/
+docs/
+k8s/

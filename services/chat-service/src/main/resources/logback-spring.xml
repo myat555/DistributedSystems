@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  JSON logging to stdout, consumed by Filebeat -> Kafka -> Logstash -> Elasticsearch
+  (see logging/). Inlined per-service rather than pulled via <include> from the
+  `common` module's logback-json-base.xml: Logback's classpath include resolver
+  cannot reliably reach a resource inside a *nested* dependency jar
+  (BOOT-INF/lib/common-*.jar) within a Spring Boot executable fat jar at the point
+  logging bootstraps, so each service carries its own copy of this small config.
+-->
+<configuration>
+    <springProperty scope="context" name="serviceName" source="spring.application.name" defaultValue="unknown-service"/>
+
+    <appender name="JSON_STDOUT" class="ch.qos.logback.core.ConsoleAppender">
+        <encoder class="net.logstash.logback.encoder.LogstashEncoder">
+            <customFields>{"service":"${serviceName}"}</customFields>
+            <includeMdcKeyName>traceId</includeMdcKeyName>
+            <includeMdcKeyName>jobId</includeMdcKeyName>
+            <includeMdcKeyName>orderId</includeMdcKeyName>
+            <includeMdcKeyName>roomId</includeMdcKeyName>
+        </encoder>
+    </appender>
+
+    <root level="INFO">
+        <appender-ref ref="JSON_STDOUT"/>
+    </root>
+</configuration>

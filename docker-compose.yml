@@ -1,0 +1,312 @@
+name: distributed-systems-platform
+
+# -----------------------------------------------------------------------------
+# Shared infrastructure + all application services for the portfolio.
+# Bring everything up with:  docker compose up --build
+# Service blocks are appended below as each one is implemented, in this order:
+#   job-queue-service -> chat-service -> order/inventory/payment-service (saga)
+#   -> discovery-server/api-gateway -> logging stack (filebeat/logstash/kibana)
+# -----------------------------------------------------------------------------
+
+networks:
+  dsp-net:
+    driver: bridge
+
+volumes:
+  kafka-data:
+  redis-data:
+  postgres-data:
+  es-data:
+
+services:
+  # ---------------------------------------------------------------- messaging
+  kafka:
+    image: apache/kafka:3.7.1
+    container_name: dsp-kafka
+    hostname: kafka
+    ports:
+      - "9092:9092"
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://kafka:29092,CONTROLLER://kafka:29093,EXTERNAL://0.0.0.0:9092
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,EXTERNAL://localhost:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,EXTERNAL:PLAINTEXT
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:29093
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      CLUSTER_ID: "ZHJpc3RyaWJ1dGVkc3lz"
+    volumes:
+      - kafka-data:/var/lib/kafka/data
+    networks: [dsp-net]
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server kafka:29092 || exit 1"]
+      interval: 10s
+      timeout: 10s
+      retries: 15
+
+  kafka-ui:
+    image: provectuslabs/kafka-ui:latest
+    container_name: dsp-kafka-ui
+    ports:
+      - "8090:8080"
+    environment:
+      KAFKA_CLUSTERS_0_NAME: local
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:29092
+    depends_on:
+      kafka:
+        condition: service_healthy
+    networks: [dsp-net]
+
+  # -------------------------------------------------------------------- cache
+  redis:
+    image: redis:7-alpine
+    container_name: dsp-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    networks: [dsp-net]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # --------------------------------------------------------------- databases
+  postgres:
+    image: postgres:16-alpine
+    container_name: dsp-postgres
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: dsp
+      POSTGRES_PASSWORD: dsp
+      POSTGRES_DB: dsp
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./infra/postgres-init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    networks: [dsp-net]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U dsp"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # ------------------------------------------------------------- discovery
+  discovery-server:
+    build:
+      context: .
+      dockerfile: services/discovery-server/Dockerfile
+    container_name: dsp-discovery-server
+    ports:
+      - "8761:8761"
+    networks: [dsp-net]
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8761/actuator/health | grep -q UP || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 15
+
+  # ------------------------------------------------------------- application
+  job-queue-service:
+    build:
+      context: .
+      dockerfile: services/job-queue-service/Dockerfile
+    container_name: dsp-job-queue-service
+    ports:
+      - "8081:8081"
+    environment:
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      EUREKA_ENABLED: "true"
+      EUREKA_URL: http://discovery-server:8761/eureka
+    depends_on:
+      kafka:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      discovery-server:
+        condition: service_healthy
+    networks: [dsp-net]
+
+  chat-service:
+    build:
+      context: .
+      dockerfile: services/chat-service/Dockerfile
+    container_name: dsp-chat-service
+    ports:
+      - "8082:8082"
+    environment:
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      EUREKA_ENABLED: "true"
+      EUREKA_URL: http://discovery-server:8761/eureka
+    depends_on:
+      kafka:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      discovery-server:
+        condition: service_healthy
+    networks: [dsp-net]
+
+  order-service:
+    build:
+      context: .
+      dockerfile: services/order-service/Dockerfile
+    container_name: dsp-order-service
+    ports:
+      - "8083:8083"
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      EUREKA_ENABLED: "true"
+      EUREKA_URL: http://discovery-server:8761/eureka
+    depends_on:
+      kafka:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      discovery-server:
+        condition: service_healthy
+    networks: [dsp-net]
+
+  inventory-service:
+    build:
+      context: .
+      dockerfile: services/inventory-service/Dockerfile
+    container_name: dsp-inventory-service
+    ports:
+      - "8084:8084"
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      EUREKA_ENABLED: "true"
+      EUREKA_URL: http://discovery-server:8761/eureka
+    depends_on:
+      kafka:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      discovery-server:
+        condition: service_healthy
+    networks: [dsp-net]
+
+  payment-service:
+    build:
+      context: .
+      dockerfile: services/payment-service/Dockerfile
+    container_name: dsp-payment-service
+    ports:
+      - "8085:8085"
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      EUREKA_ENABLED: "true"
+      EUREKA_URL: http://discovery-server:8761/eureka
+    depends_on:
+      kafka:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      discovery-server:
+        condition: service_healthy
+    networks: [dsp-net]
+
+  api-gateway:
+    build:
+      context: .
+      dockerfile: services/api-gateway/Dockerfile
+    container_name: dsp-api-gateway
+    ports:
+      - "8080:8080"
+    environment:
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      EUREKA_ENABLED: "true"
+      EUREKA_URL: http://discovery-server:8761/eureka
+    depends_on:
+      redis:
+        condition: service_healthy
+      discovery-server:
+        condition: service_healthy
+      job-queue-service:
+        condition: service_started
+      chat-service:
+        condition: service_started
+      order-service:
+        condition: service_started
+      inventory-service:
+        condition: service_started
+      payment-service:
+        condition: service_started
+    networks: [dsp-net]
+
+  # ------------------------------------------------------- log aggregation
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.15.0
+    container_name: dsp-elasticsearch
+    environment:
+      discovery.type: single-node
+      xpack.security.enabled: "false"
+      ES_JAVA_OPTS: "-Xms512m -Xmx512m"
+    ports:
+      - "9200:9200"
+    volumes:
+      - es-data:/usr/share/elasticsearch/data
+    networks: [dsp-net]
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:9200/_cluster/health || exit 1"]
+      interval: 10s
+      timeout: 10s
+      retries: 20
+
+  logstash:
+    image: docker.elastic.co/logstash/logstash:8.15.0
+    container_name: dsp-logstash
+    volumes:
+      - ./logging/logstash/pipeline:/usr/share/logstash/pipeline:ro
+    environment:
+      LS_JAVA_OPTS: "-Xms256m -Xmx256m"
+    depends_on:
+      kafka:
+        condition: service_healthy
+      elasticsearch:
+        condition: service_healthy
+    networks: [dsp-net]
+
+  kibana:
+    image: docker.elastic.co/kibana/kibana:8.15.0
+    container_name: dsp-kibana
+    ports:
+      - "5601:5601"
+    environment:
+      ELASTICSEARCH_HOSTS: '["http://elasticsearch:9200"]'
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+    networks: [dsp-net]
+
+  filebeat:
+    image: docker.elastic.co/beats/filebeat:8.15.0
+    container_name: dsp-filebeat
+    user: root
+    command: ["--strict.perms=false", "-e"]
+    volumes:
+      - ./logging/filebeat/filebeat.yml:/usr/share/filebeat/filebeat.yml:ro
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    depends_on:
+      kafka:
+        condition: service_healthy
+    networks: [dsp-net]

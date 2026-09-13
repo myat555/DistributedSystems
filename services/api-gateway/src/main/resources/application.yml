@@ -1,0 +1,78 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: api-gateway
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+  cloud:
+    gateway:
+      routes:
+        - id: job-queue-service
+          uri: lb://JOB-QUEUE-SERVICE
+          predicates:
+            - Path=/api/jobs/**
+          filters:
+            - name: RequestRateLimiter
+              args:
+                redis-rate-limiter.replenishRate: 20
+                redis-rate-limiter.burstCapacity: 40
+                key-resolver: "#{@userOrIpKeyResolver}"
+        - id: chat-service-ws
+          # lb:ws:// load-balances the WebSocket upgrade request itself via Eureka,
+          # not just plain HTTP.
+          uri: lb:ws://CHAT-SERVICE
+          predicates:
+            - Path=/ws/**
+        - id: chat-service-http
+          uri: lb://CHAT-SERVICE
+          predicates:
+            - Path=/api/chat/**
+        - id: order-service
+          uri: lb://ORDER-SERVICE
+          predicates:
+            - Path=/orders/**
+          filters:
+            - name: RequestRateLimiter
+              args:
+                redis-rate-limiter.replenishRate: 20
+                redis-rate-limiter.burstCapacity: 40
+                key-resolver: "#{@userOrIpKeyResolver}"
+        - id: inventory-service
+          uri: lb://INVENTORY-SERVICE
+          predicates:
+            - Path=/inventory/**
+        - id: payment-service
+          uri: lb://PAYMENT-SERVICE
+          predicates:
+            - Path=/payments/**
+
+app:
+  jwt:
+    # DEMO ONLY default secret — override with a real secret via JWT_SECRET in
+    # any non-throwaway environment. Must be >= 32 bytes for HS256.
+    secret: ${JWT_SECRET:demo-super-secret-key-that-is-at-least-32-bytes-long-for-hs256}
+
+eureka:
+  client:
+    enabled: ${EUREKA_ENABLED:false}
+    service-url:
+      defaultZone: ${EUREKA_URL:http://localhost:8761/eureka}
+  instance:
+    prefer-ip-address: true
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus
+  endpoint:
+    health:
+      show-details: always
+
+logging:
+  level:
+    com.dsp: INFO

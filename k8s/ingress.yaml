@@ -1,0 +1,23 @@
+# Requires an nginx ingress controller in the cluster (e.g. `minikube addons
+# enable ingress`, or any nginx ingress controller installed in a real cluster)
+# -- this resource just describes routing, it doesn't run the controller itself.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: dsp-ingress
+  namespace: dsp
+  annotations:
+    nginx.ingress.kubernetes.io/ssl-redirect: "false"
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: dsp.local
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: api-gateway
+                port:
+                  number: 8080
